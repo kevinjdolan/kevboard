@@ -1,3 +1,6 @@
+import hid_parser
+import math
+
 INTERFACE_CLASS_HID = 0x03
 
 def find_by_type(descriptors, name, first=True):
@@ -218,23 +221,24 @@ class InterfaceFunctionalDescriptor(Descriptor):
         if descriptor_type != 0x21:
             return None
 
-        last_descriptor = state[-1]
-        iface = (
-            last_descriptor['bInterfaceClass'],
-            last_descriptor['bInterfaceSubclass'],        
+        interface = state[-1]
+        interface_class = (
+            interface['bInterfaceClass'],
+            interface['bInterfaceSubclass'],        
         )
-        if iface not in cls.specs:
+        if interface_class not in cls.specs:
             return cls(
                 name="INTERFACE FUNCTIONAL: UNKNOWN",
                 descriptor_type=descriptor_type,
                 data=data,
             )
         
-        spec = cls.specs[iface]
+        spec = cls.specs[interface_class]
         attrs = cls._extract_attributes(data, spec['attrs'])
         return cls(
             name=f"INTERFACE FUNCTIONAL: { spec['name'] }",
             descriptor_type=descriptor_type,
+            interface=interface,
             **attrs,
         )
             
@@ -249,6 +253,57 @@ class UnknownDescriptor(Descriptor):
             data=data,
         )
 
+class HidReportDescriptor(object):
+    
+    report_types = [
+        'input',
+        'output',
+        'feature',
+    ]
+    
+    @classmethod
+    def parse(cls, data):
+        desc = hid_parser.ReportDescriptor(data)
+        return cls(desc)
+    
+    def __init__(self, desc):
+        self.desc = desc
+    
+    def get_report_ids(self, which):
+        getter = getattr(self.desc, f"{which}_report_ids")
+        return getter
+    
+    def get_report_items(self, which, id):
+        getter = getattr(self.desc, f"get_{which}_items")
+        return getter(id)
+    
+    def get_report_size(self, which, id):
+        getter = getattr(self.desc, f"get_{which}_report_size")
+        return getter(id)
+    
+    def get_input_packet_size(self):
+        sizes = []
+        for id in self.get_report_ids('input'):
+            sizes.append(self.get_report_size('input', id))
+        return math.ceil(max(sizes) / 8) + 1
+    
+    def get_report_packet_size(self, report_type, report_id):
+        size = self.get_report_size(report_type, report_id)
+        return math.ceil(size / 8) + 1
+    
+    def pprint(self):
+        lines = []
+        for report_type in self.report_types:
+            ids = self.get_report_ids(report_type)
+            for id in ids:
+                size = self.get_report_size(report_type, id)
+                items = self.get_report_items(report_type, id)
+                lines.append(f"Report: ID={ id }; Type = { report_type }; Size = { size }")
+                for item in items:
+                    lines.append(f"\t{ item.__class__.__name__ }: offset={ item.offset }; size={ item.size }")
+        return "\n".join(lines)
+    
+    
 DESCRIPTOR_TYPES = [
     BasicDescriptor,
     InterfaceFunctionalDescriptor,
